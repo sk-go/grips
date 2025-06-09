@@ -7,7 +7,7 @@ Ein KI-gestützter Assistent für die Analyse von Audio-Aufzeichnungen und Dokum
 - **backend/**: Python-basierte Cloud Functions und API
   - **functions/**: Google Cloud Functions
     - **audio_processor/**: Verarbeitung von Audio-Dateien
-    - **pw_client/**: Client für PaperWork Integration
+    - **pw_client/**: Client für Professional Works Integration
     - **nlp_engine/**: NLP-Verarbeitung mit OpenAI
   - **api/**: Haupt-API Gateway
 - **frontend/**: Next.js Web-Anwendung
