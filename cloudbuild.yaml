@@ -1,0 +1,38 @@
+steps:
+  # Deploy Cloud Functions
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud functions deploy audio-processor \
+          --source=backend/functions/audio_processor \
+          --runtime=python39 \
+          --trigger-event-filters="bucket=$$PROJECT_ID-audio" \
+          --trigger-event-filters-path-pattern="*.wav,*.mp3,*.m4a" \
+          --region=europe-west3
+
+        gcloud functions deploy nlp-engine \
+          --source=backend/functions/nlp_engine \
+          --runtime=python39 \
+          --trigger-topic=transcription-complete \
+          --region=europe-west3
+
+        gcloud functions deploy pw-client \
+          --source=backend/functions/pw_client \
+          --runtime=python39 \
+          --trigger-topic=pw-actions \
+          --region=europe-west3
+
+  # Deploy Frontend
+  - name: 'node:18'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        cd frontend
+        npm install
+        npm run build
+
+options:
+  logging: CLOUD_LOGGING_ONLY 
