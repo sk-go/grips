@@ -21,7 +21,7 @@ class ProfessionalWorksClient:
         
     def _get_secret(self, client, project_id, secret_id):
         name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-        response = client.access_secret_version(request={"name": secret_name})
+        response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8")
     
     def create_client_note(self, client_id, title, content, note_type="general"):

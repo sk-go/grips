@@ -15,7 +15,7 @@ $openaiKeyText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.Int
 echo $openaiKeyText | gcloud secrets create openai-api-key --data-file=-
 
 # PW API Credentials
-Write-Host "Setting up PaperWork API credentials..." -ForegroundColor Blue
+Write-Host "Setting up Professional Works API credentials..." -ForegroundColor Blue
 $pwToken = Read-Host "PW API Token" -AsSecureString
 $pwTokenText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($pwToken))
 echo $pwTokenText | gcloud secrets create pw-api-token --data-file=-

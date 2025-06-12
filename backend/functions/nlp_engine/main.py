@@ -3,6 +3,7 @@ import openai
 from google.cloud import firestore, secretmanager, pubsub_v1
 import os
 import json
+import base64, json
 
 @functions_framework.cloud_event
 def process_transcription(cloud_event):
@@ -20,8 +21,9 @@ def process_transcription(cloud_event):
     openai.api_key = openai_response.payload.data.decode("UTF-8")
     
     # Parse the incoming message
-    message_data = cloud_event.data
-    transcript_data = json.loads(message_data)
+    attributes = cloud_event.data["message"].get("attributes", {})
+    raw = base64.b64decode(cloud_event.data["message"]["data"]).decode()
+    transcript_data = json.loads(raw)
     
     # Get transcript text
     transcript_text = transcript_data.get('text', '')

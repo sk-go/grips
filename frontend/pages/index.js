@@ -1,138 +1,319 @@
-import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Mic, Square, Upload, Loader2, CheckCircle, Brain, Sparkles } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
+import WaveSurfer from 'wavesurfer.js';
 
-export default function Home() {
-  const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [transcriptions, setTranscriptions] = useState([]);
-  const [message, setMessage] = useState('');
+export default function GripsAssistant() {
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [audioBlob, setAudioBlob] = useState(null);
+  const [transcription, setTranscription] = useState(null);
+  const [analysis, setAnalysis] = useState(null);
+  const [pwActions, setPwActions] = useState([]);
+  
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const wavesurferRef = useRef(null);
+  const waveformRef = useRef(null);
 
   useEffect(() => {
-    fetchTranscriptions();
-  }, []);
-
-  const fetchTranscriptions = async () => {
-    try {
-      const response = await axios.get('/api/transcriptions');
-      setTranscriptions(response.data);
-    } catch (error) {
-      console.error('Error fetching transcriptions:', error);
-    }
-  };
-
-  const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-  };
-
-  const handleUpload = async () => {
-    if (!file) {
-      setMessage('Bitte wählen Sie eine Datei aus');
-      return;
-    }
-
-    setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await axios.post('/api/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+    if (waveformRef.current && audioBlob) {
+      wavesurferRef.current = WaveSurfer.create({
+        container: waveformRef.current,
+        waveColor: '#8B5CF6',
+        progressColor: '#7C3AED',
+        cursorColor: '#DDD6FE',
+        barWidth: 3,
+        barRadius: 3,
+        responsive: true,
+        height: 60,
       });
-      setMessage('Datei erfolgreich hochgeladen!');
-      setFile(null);
-      fetchTranscriptions();
-    } catch (error) {
-      setMessage('Fehler beim Hochladen der Datei');
-      console.error('Upload error:', error);
-    } finally {
-      setUploading(false);
+      
+      wavesurferRef.current.loadBlob(audioBlob);
     }
+  }, [audioBlob]);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      chunksRef.current = [];
+      
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorderRef.current.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        chunksRef.current = [];
+      };
+      
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      toast.success('Aufnahme gestartet');
+    } catch (err) {
+      toast.error('Mikrofonzugriff verweigert');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      setIsRecording(false);
+      toast.success('Aufnahme beendet');
+    }
+  };
+
+  const uploadAndProcess = async () => {
+    if (!audioBlob) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      // 1. Get signed upload URL
+      const urlResponse = await fetch('/api/get-upload-url');
+      const { uploadUrl, fileName } = await urlResponse.json();
+      
+      // 2. Upload to Cloud Storage
+      await fetch(uploadUrl, {
+        method: 'PUT',
+        body: audioBlob,
+        headers: {
+          'Content-Type': 'audio/webm'
+        }
+      });
+      
+      toast.success('Audio hochgeladen, wird verarbeitet...');
+      
+      // 3. Poll for results
+      pollForResults(fileName);
+      
+    } catch (error) {
+      console.error('Upload error:', error);
+      toast.error('Fehler beim Upload');
+      setIsProcessing(false);
+    }
+  };
+
+  const pollForResults = async (fileName) => {
+    const maxAttempts = 30;
+    let attempts = 0;
+    
+    const poll = setInterval(async () => {
+      attempts++;
+      
+      try {
+        const fileId = fileName.split('/')[1].replace('.webm', '');
+        const response = await fetch(`/api/status/${fileId}`);
+        const data = await response.json();
+        
+        if (data.status === 'analyzed') {
+          clearInterval(poll);
+          setTranscription(data.transcript);
+          setAnalysis(data.analysis);
+          setPwActions(data.pw_actions || []);
+          setIsProcessing(false);
+          toast.success('Analyse abgeschlossen!');
+        } else if (attempts >= maxAttempts) {
+          clearInterval(poll);
+          setIsProcessing(false);
+          toast.error('Timeout bei der Verarbeitung');
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    }, 2000);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center">
-          <h1 className="text-3xl font-extrabold text-gray-900 sm:text-4xl">
-            GRIPS Assistant
-          </h1>
-          <p className="mt-4 text-lg text-gray-600">
-            Audio-Dateien hochladen und analysieren lassen
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
+      <Toaster position="top-right" />
+      
+      {/* Background Effects */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -inset-[10px] opacity-50">
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl animate-pulse"></div>
+          <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-violet-500 rounded-full mix-blend-multiply filter blur-3xl animate-pulse delay-700"></div>
+          <div className="absolute bottom-1/4 left-1/3 w-96 h-96 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl animate-pulse delay-1000"></div>
         </div>
+      </div>
 
-        {/* Upload Section */}
-        <div className="mt-10 bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
-          <h3 className="text-lg leading-6 font-medium text-gray-900">
-            Audio-Datei hochladen
-          </h3>
-          <div className="mt-5">
-            <input
-              type="file"
-              accept=".wav,.mp3,.m4a"
-              onChange={handleFileChange}
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-            />
-            <button
-              onClick={handleUpload}
-              disabled={uploading}
-              className="mt-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-            >
-              {uploading ? 'Wird hochgeladen...' : 'Hochladen'}
-            </button>
+      <div className="relative z-10 container mx-auto px-4 py-16">
+        {/* Header */}
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-12"
+        >
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <Brain className="w-12 h-12 text-purple-400" />
+            <h1 className="text-6xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-400">
+              GRIPS
+            </h1>
+            <Sparkles className="w-12 h-12 text-pink-400" />
           </div>
-          {message && (
-            <p className={`mt-2 text-sm ${message.includes('erfolgreich') ? 'text-green-600' : 'text-red-600'}`}>
-              {message}
-            </p>
-          )}
-        </div>
+          <p className="text-xl text-gray-300">
+            Ihr intelligenter Versicherungsassistent
+          </p>
+        </motion.div>
 
-        {/* Transcriptions List */}
-        <div className="mt-10">
-          <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-            Transkriptionen
-          </h3>
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <ul className="divide-y divide-gray-200">
-              {transcriptions.map((transcription) => (
-                <li key={transcription.id} className="px-4 py-4 sm:px-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {transcription.audio_file}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        Status: {transcription.status}
-                      </p>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        transcription.status === 'analyzed' 
-                          ? 'bg-green-100 text-green-800' 
-                          : transcription.status === 'processing' 
-                          ? 'bg-yellow-100 text-yellow-800' 
-                          : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {transcription.status}
-                      </span>
-                    </div>
+        {/* Recording Interface */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.2 }}
+          className="max-w-2xl mx-auto"
+        >
+          <div className="bg-white/10 backdrop-blur-lg rounded-3xl p-8 shadow-2xl border border-white/20">
+            
+            {/* Recording Button */}
+            <div className="flex justify-center mb-8">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={isProcessing}
+                className={`relative p-8 rounded-full transition-all ${
+                  isRecording 
+                    ? 'bg-red-500 shadow-lg shadow-red-500/50' 
+                    : 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-lg shadow-purple-500/50'
+                } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {isRecording ? (
+                  <Square className="w-12 h-12 text-white" />
+                ) : (
+                  <Mic className="w-12 h-12 text-white" />
+                )}
+                
+                {isRecording && (
+                  <motion.div
+                    className="absolute inset-0 rounded-full border-4 border-red-400"
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                  />
+                )}
+              </motion.button>
+            </div>
+
+            {/* Waveform */}
+            {audioBlob && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6"
+              >
+                <div ref={waveformRef} className="rounded-lg bg-white/5 p-2"></div>
+              </motion.div>
+            )}
+
+            {/* Upload Button */}
+            {audioBlob && !isProcessing && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex justify-center mb-6"
+              >
+                <button
+                  onClick={uploadAndProcess}
+                  className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-violet-500 to-purple-500 text-white rounded-full font-semibold shadow-lg hover:shadow-xl transition-all"
+                >
+                  <Upload className="w-5 h-5" />
+                  Analyse starten
+                </button>
+              </motion.div>
+            )}
+
+            {/* Processing State */}
+            {isProcessing && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-center py-8"
+              >
+                <Loader2 className="w-12 h-12 text-purple-400 animate-spin mx-auto mb-4" />
+                <p className="text-gray-300">KI analysiert Ihre Aufnahme...</p>
+              </motion.div>
+            )}
+
+            {/* Results */}
+            <AnimatePresence>
+              {transcription && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="space-y-4"
+                >
+                  {/* Transcription */}
+                  <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                    <h3 className="text-lg font-semibold text-purple-300 mb-2">
+                      Transkription
+                    </h3>
+                    <p className="text-gray-300">{transcription}</p>
                   </div>
-                  {transcription.analysis && (
-                    <div className="mt-2">
-                      <p className="text-sm text-gray-700">
-                        {transcription.analysis}
-                      </p>
+
+                  {/* Analysis */}
+                  {analysis && (
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                      <h3 className="text-lg font-semibold text-purple-300 mb-2">
+                        KI-Analyse
+                      </h3>
+                      <div className="space-y-2 text-gray-300">
+                        {analysis.intents && (
+                          <p><span className="text-purple-400">Intent:</span> {analysis.intents.join(', ')}</p>
+                        )}
+                        {analysis.entities && (
+                          <div>
+                            <span className="text-purple-400">Erkannte Daten:</span>
+                            <ul className="mt-1 ml-4">
+                              {Object.entries(analysis.entities).map(([key, value]) => (
+                                <li key={key}>• {key}: {value}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
-                </li>
-              ))}
-            </ul>
+
+                  {/* PW Actions */}
+                  {pwActions.length > 0 && (
+                    <div className="bg-gradient-to-r from-green-500/10 to-emerald-500/10 rounded-xl p-4 border border-green-500/20">
+                      <h3 className="text-lg font-semibold text-green-300 mb-2 flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5" />
+                        Professional Works Aktionen
+                      </h3>
+                      <ul className="space-y-1 text-gray-300">
+                        {pwActions.map((action, idx) => (
+                          <li key={idx} className="flex items-center gap-2">
+                            <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                            {action.type}: {action.description}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        </div>
+        </motion.div>
+
+        {/* Footer */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          className="text-center mt-12 text-gray-400"
+        >
+          <p>Powered by AssemblyAI • GPT-4 • Professional Works</p>
+        </motion.div>
       </div>
     </div>
   );
-} 
+}

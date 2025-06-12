@@ -1,38 +1,110 @@
+substitutions:
+  _REGION: 'europe-west3'
+  _BUCKET_NAME: '${_BUCKET_NAME}'
+
 steps:
-  # Deploy Cloud Functions
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        gcloud functions deploy audio-processor \
-          --source=backend/functions/audio_processor \
-          --runtime=python39 \
-          --trigger-event-filters="bucket=$$PROJECT_ID-audio" \
-          --trigger-event-filters-path-pattern="*.wav,*.mp3,*.m4a" \
-          --region=europe-west3
+# 1. Build the frontend Docker image
+- name: 'gcr.io/cloud-builders/docker'
+  id: Build-Frontend
+  args:
+    - 'build'
+    - '-t'
+    - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/grips-repo/grips-frontend:$BUILD_ID'
+    - './frontend'
 
-        gcloud functions deploy nlp-engine \
-          --source=backend/functions/nlp_engine \
-          --runtime=python39 \
-          --trigger-topic=transcription-complete \
-          --region=europe-west3
+# 2. Push frontend image to Artifact Registry (must precede Cloud Run deploy)
+- name: 'gcr.io/cloud-builders/docker'
+  id: Push-Frontend-Image
+  args:
+    - 'push'
+    - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/grips-repo/grips-frontend:$BUILD_ID'
 
-        gcloud functions deploy pw-client \
-          --source=backend/functions/pw_client \
-          --runtime=python39 \
-          --trigger-topic=pw-actions \
-          --region=europe-west3
+# 3. Deploy the frontend to Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: Deploy-Frontend
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'grips-frontend'
+    - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/grips-repo/grips-frontend:$BUILD_ID'
+    - '--region=${_REGION}'
+    - '--platform=managed'
+    - '--allow-unauthenticated'
+    - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--set-env-vars=BUCKET_NAME=${_BUCKET_NAME}'
 
-  # Deploy Frontend
-  - name: 'node:18'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        cd frontend
-        npm install
-        npm run build
+# 4. Deploy the audio-processor Cloud Function
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: Deploy-Audio-Processor
+  entrypoint: gcloud
+  args:
+    - 'functions'
+    - 'deploy'
+    - 'audio-processor'
+    - '--gen2'
+    - '--source=./backend/functions/audio_processor'
+    - '--runtime=python39'
+    - '--region=${_REGION}'
+    - '--entry-point=process_audio'
+    - '--trigger-event-filters=type=google.cloud.storage.object.v1.finalized'
+    - '--trigger-event-filters=bucket=${_BUCKET_NAME}'
+    - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--memory=512MB'
+    - '--timeout=540s'
+    - '--allow-unauthenticated'
+
+# 5. Deploy the nlp-engine Cloud Function
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: Deploy-NLP-Engine
+  entrypoint: gcloud
+  args:
+    - 'functions'
+    - 'deploy'
+    - 'nlp-engine'
+    - '--gen2'
+    - '--source=./backend/functions/nlp_engine'
+    - '--runtime=python39'
+    - '--region=${_REGION}'
+    - '--entry-point=process_transcription'
+    - '--trigger-topic=transcription-complete'
+    - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--memory=1GB'
+    - '--timeout=540s'
+
+# 6. Deploy the pw-client Cloud Function
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: Deploy-PW-Client
+  entrypoint: gcloud
+  args:
+    - 'functions'
+    - 'deploy'
+    - 'pw-client'
+    - '--gen2'
+    - '--source=./backend/functions/pw_client'
+    - '--runtime=python39'
+    - '--region=${_REGION}'
+    - '--entry-point=handle_pw_action'
+    - '--trigger-topic=pw-actions'
+    - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--memory=512MB'
+    - '--timeout=300s'
+
+# 7. Apply run.invoker Role to Agent
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  id: Allow-Eventarc-Invoke
+  entrypoint: gcloud
+  args:
+    - run
+    - services
+    - add-iam-policy-binding
+    - audio-processor
+    - --region=${_REGION}
+    - --member=serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-eventarc.iam.gserviceaccount.com
+    - --role=roles/run.invoker
+
+images:
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/grips-repo/grips-frontend:$BUILD_ID'
 
 options:
   logging: CLOUD_LOGGING_ONLY 
