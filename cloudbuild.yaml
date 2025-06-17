@@ -1,6 +1,6 @@
 substitutions:
   _REGION: 'europe-west3'
-  _BUCKET_NAME: '${_BUCKET_NAME}'
+  _BUCKET_NAME: 'grips-assistant-6692-audio'
 
 steps:
 # 1. Build the frontend Docker image
@@ -33,6 +33,10 @@ steps:
     - '--allow-unauthenticated'
     - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
     - '--set-env-vars=BUCKET_NAME=${_BUCKET_NAME}'
+    - '--min-instances=0'
+    - '--max-instances=10'
+    - '--cpu=1'
+    - '--memory=512Mi'
 
 # 4. Deploy the audio-processor Cloud Function
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -52,7 +56,6 @@ steps:
     - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
     - '--memory=512MB'
     - '--timeout=540s'
-    - '--allow-unauthenticated'
 
 # 5. Deploy the nlp-engine Cloud Function
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -89,6 +92,24 @@ steps:
     - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
     - '--memory=512MB'
     - '--timeout=300s'
+
+# Deploy transcription-complete HTTP function
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: Deploy-Transcription-Complete
+  entrypoint: gcloud
+  args:
+    - functions
+    - deploy
+    - transcription-complete
+    - '--gen2'
+    - '--runtime=python39'
+    - '--region=${_REGION}'
+    - '--source=./backend/functions/transcription_complete'
+    - '--entry-point=transcription_complete'
+    - '--trigger-http'
+    - '--allow-unauthenticated'
+    - '--service-account=grips-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com'
+    - '--memory=256MB'
 
 # 7. Apply run.invoker Role to Agent
 - name: gcr.io/google.com/cloudsdktool/cloud-sdk

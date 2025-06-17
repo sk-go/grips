@@ -5,25 +5,38 @@ import os
 import json
 import re
 from datetime import datetime
+from utils import (
+    get_secret,
+    get_project_id,
+    handle_processing_error,
+    update_document_status
+)
 
 class ProfessionalWorksClient:
     def __init__(self):
         # Get secrets
         client = secretmanager.SecretManagerServiceClient()
-        project_id = os.environ.get('GCP_PROJECT')
+        project_id = get_project_id()
         
-        self.api_token = self._get_secret(client, project_id, 'pw-api-token')
+        self.api_token = get_secret(client, project_id, 'pw-api-token')
+        self.pw_user = get_secret(client, project_id, 'pw-user-id')
         self.base_url = 'https://api.professional.works/api/v1'
         self.headers = {
             'Authorization': f'Bearer {self.api_token}',
             'Content-Type': 'application/json'
         }
-        
-    def _get_secret(self, client, project_id, secret_id):
-        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-        response = client.access_secret_version(request={"name": name})
-        return response.payload.data.decode("UTF-8")
     
+    def _make_request(self, method, endpoint, **kwargs):
+        """Generic request handler with error handling"""
+        url = f'{self.base_url}/{endpoint}'
+        try:
+            response = requests.request(method, url, headers=self.headers, **kwargs)
+            response.raise_for_status()
+            return response.json() if response.content else None
+        except requests.exceptions.RequestException as e:
+            print(f"API request failed: {str(e)}")
+            return None
+
     def create_client_note(self, client_id, title, content, note_type="general"):
         """Create a client note in Professional Works"""
         data = {
@@ -33,14 +46,7 @@ class ProfessionalWorksClient:
             'type': note_type,
             'created_at': datetime.now().isoformat()
         }
-        
-        response = requests.post(
-            f'{self.base_url}/client-notes',
-            headers=self.headers,
-            json=data
-        )
-        
-        return response.json() if response.status_code < 400 else None
+        return self._make_request('POST', f'{self.pw_user}/client-notes', json=data)
     
     def create_activity_log(self, description, entity_type="transcription", entity_id=None):
         """Create an activity log entry"""
@@ -50,30 +56,37 @@ class ProfessionalWorksClient:
             'entity_id': entity_id,
             'created_at': datetime.now().isoformat()
         }
-        
-        response = requests.post(
-            f'{self.base_url}/activity-log',
-            headers=self.headers,
-            json=data
-        )
-        
-        return response.json() if response.status_code < 400 else None
+        return self._make_request('POST', f'{self.pw_user}/activity-log', json=data)
     
-    def search_client_by_name(self, name):
-        """Search for a client by name"""
-        params = {'search': name, 'limit': 5}
-        
-        response = requests.get(
-            f'{self.base_url}/clients',
-            headers=self.headers,
-            params=params
-        )
-        
-        if response.status_code == 200:
-            clients = response.json().get('data', [])
+    def search_client_by_name(self, name, limit=5):
+        """Search for a client by name with pagination"""
+        params = {
+            'q': name,
+            'clients': limit,
+            'contracts': 0  # We don't need contracts in the search results
+        }
+        response = self._make_request('GET', f'{self.pw_user}/search', params=params)
+        if response and 'data' in response:
+            clients = response['data'].get('clients', [])
             return clients[0] if clients else None
         return None
-    
+
+    def get_client_details(self, client_id):
+        """Get detailed client information"""
+        return self._make_request('GET', f'{self.pw_user}/clients/{client_id}')
+
+    def get_client_contracts(self, client_id, limit=10):
+        """Get client's contracts with pagination"""
+        params = {'per_page': limit}
+        return self._make_request('GET', f'{self.pw_user}/clients/{client_id}/contracts', params=params)
+
+    def get_insurance_companies(self, name=None, limit=15):
+        """Get insurance companies with optional name filter"""
+        params = {'per_page': limit}
+        if name:
+            params['q'] = name
+        return self._make_request('GET', 'insurance-companies', params=params)
+
     def extract_insurance_info(self, text):
         """Extract insurance-relevant information from text"""
         info = {
@@ -161,6 +174,8 @@ def handle_pw_action(cloud_event):
     action_data = json.loads(message_data)
     
     transcript_id = action_data.get('transcript_id')
+    client_id = action_data.get('client_id')
+    upload_id = action_data.get('upload_id')
     analysis = action_data.get('analysis', '')
     
     if not action_data.get('action_required'):
@@ -173,7 +188,7 @@ def handle_pw_action(cloud_event):
         # Get the full transcript from Firestore
         transcript_doc = db.collection('transcriptions').document(transcript_id).get()
         if not transcript_doc.exists:
-            return {'status': 'error', 'message': 'Transcript not found'}
+            return handle_processing_error(db, 'Transcript not found')
         
         transcript_data = transcript_doc.to_dict()
         transcript_text = transcript_data.get('text', analysis)
@@ -185,7 +200,8 @@ def handle_pw_action(cloud_event):
         results = {
             'status': 'success',
             'actions_taken': [],
-            'insurance_analysis': insurance_analysis
+            'insurance_analysis': insurance_analysis,
+            'client_id': client_id
         }
         
         # Create activity log entry
@@ -235,15 +251,17 @@ def handle_pw_action(cloud_event):
                     break
         
         # Store the enhanced analysis back to Firestore
-        transcript_doc.reference.update({
+        update_document_status(db, 'transcriptions', transcript_id, 'pw_processed', {
             'insurance_info': insurance_info,
             'insurance_analysis': insurance_analysis,
-            'pw_processed': True,
             'pw_results': results
         })
+        
+        # Update upload document if it exists
+        if upload_id:
+            update_document_status(db, 'uploads', upload_id, 'pw_processed')
         
         return results
         
     except Exception as e:
-        print(f"Error handling Professional Works action: {e}")
-        return {'status': 'error', 'message': str(e)}
+        return handle_processing_error(db, e, transcript_id, upload_id)

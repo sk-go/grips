@@ -1,12 +1,16 @@
 from flask import Flask, request, jsonify
 from google.cloud import firestore, storage
 import os
+from ..utils import generate_storage_path, update_document_status, get_project_id
 
 app = Flask(__name__)
 
 # Initialize clients
 db = firestore.Client()
 storage_client = storage.Client()
+
+# Hardcoded client ID for initial development
+DEFAULT_CLIENT_ID = "client_001"
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -23,15 +27,30 @@ def upload_audio():
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
     
+    # Generate storage path using utility function
+    storage_path = generate_storage_path(DEFAULT_CLIENT_ID, file.filename)
+    
     # Upload to bucket
-    bucket_name = f"{os.environ.get('GCP_PROJECT')}-audio"
+    bucket_name = f"{get_project_id()}-audio"
     bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(file.filename)
+    blob = bucket.blob(storage_path)
     blob.upload_from_file(file)
+    
+    # Create a Firestore document to track the upload
+    doc_ref = db.collection('uploads').document()
+    doc_ref.set({
+        'client_id': DEFAULT_CLIENT_ID,
+        'original_filename': file.filename,
+        'storage_path': storage_path,
+        'uploaded_at': firestore.SERVER_TIMESTAMP,
+        'status': 'uploaded'
+    })
     
     return jsonify({
         'message': 'File uploaded successfully',
-        'filename': file.filename
+        'filename': file.filename,
+        'storage_path': storage_path,
+        'upload_id': doc_ref.id
     })
 
 @app.route('/transcriptions', methods=['GET'])

@@ -14,6 +14,10 @@ $BUCKET_NAME = $config.BUCKET_NAME
 
 Write-Host "🚀 Triggering Cloud Build deployment for $PROJECT_ID..." -ForegroundColor Green
 
+# Copy utils.py to all function directories
+Write-Host "📦 Copying utils.py to function directories..." -ForegroundColor Blue
+.\copy_utils.ps1
+
 # Ensure we're using the correct project
 gcloud config set project $PROJECT_ID
 

@@ -12,7 +12,8 @@ export default async function handler(req, res) {
 
   try {
     const bucketName = process.env.BUCKET_NAME;
-    const fileName = `audio/${Date.now()}.webm`;
+    const clientId = req.query.clientId || 'public';
+    const fileName = `clients/${clientId}/audio/${Date.now()}.webm`;
     
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(fileName);

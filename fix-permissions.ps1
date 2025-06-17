@@ -62,21 +62,21 @@ Bind-RoleIfMissing "serviceAccount:$APP_SERVICE_ACCOUNT_EMAIL" "roles/storage.ob
 # ------------------------------------------------------------------------------
 # 3. Cloud Build service account permissions
 # ------------------------------------------------------------------------------
-$CLOUD_BUILD_SA = "serviceAccount:$PROJECT_NUMBER@cloudbuild.gserviceaccount.com"
+$CLOUD_BUILD_SA = "$PROJECT_NUMBER@cloudbuild.gserviceaccount.com"
 Write-Host "Granting build/deploy permissions to Cloud Build SA ($CLOUD_BUILD_SA)..." -ForegroundColor Blue
 # Cloud Run & Cloud Functions deploy rights
-Bind-RoleIfMissing $CLOUD_BUILD_SA "roles/run.admin"
-Bind-RoleIfMissing $CLOUD_BUILD_SA "roles/cloudfunctions.admin"
+Bind-RoleIfMissing "serviceAccount:$CLOUD_BUILD_SA" "roles/run.admin"
+Bind-RoleIfMissing "serviceAccount:$CLOUD_BUILD_SA" "roles/cloudfunctions.admin"
 # Artifact Registry write rights
-Bind-RoleIfMissing $CLOUD_BUILD_SA "roles/artifactregistry.writer"
+Bind-RoleIfMissing "serviceAccount:$CLOUD_BUILD_SA" "roles/artifactregistry.writer"
 # Allow Cloud Build SA to impersonate runtime SA (actAs)
 $bindingExists = gcloud iam service-accounts get-iam-policy $APP_SERVICE_ACCOUNT_EMAIL `
-    --filter="bindings.role:roles/iam.serviceAccountUser AND bindings.members:$CLOUD_BUILD_SA" `
+    --filter="bindings.role:roles/iam.serviceAccountUser AND bindings.members:serviceAccount:$CLOUD_BUILD_SA" `
     --format="value(bindings.role)" 2>$null
 if (-not $bindingExists) {
     Write-Host "  + granting roles/iam.serviceAccountUser on $APP_SERVICE_ACCOUNT_EMAIL to Cloud Build SA" -ForegroundColor Yellow
     gcloud iam service-accounts add-iam-policy-binding $APP_SERVICE_ACCOUNT_EMAIL `
-        --member=$CLOUD_BUILD_SA `
+        --member="serviceAccount:$CLOUD_BUILD_SA" `
         --role="roles/iam.serviceAccountUser" --quiet
 } else {
     Write-Host "  ✓ Cloud Build SA already has roles/iam.serviceAccountUser on runtime SA" -ForegroundColor Green
@@ -122,5 +122,30 @@ foreach ($AGENT in @($EVENTARC_SA, $PUBSUB_SA, $CLOUD_BUILD_SA)) {
         Write-Host "  ✓ $AGENT already has TokenCreator on runtime SA" -ForegroundColor Green
     }
 }
+
+# ------------------------------------------------------------------------------
+# 8. Cloud Functions service agent permissions
+# ------------------------------------------------------------------------------
+$GCF_SA = "service-$PROJECT_NUMBER@gcf-admin-robot.iam.gserviceaccount.com"
+Write-Host "Granting Cloud Functions service agent ($GCF_SA) Cloud Run admin permission..." -ForegroundColor Blue
+Bind-RoleIfMissing "serviceAccount:$GCF_SA" "roles/run.admin"
+
+# Allow it to impersonate the runtime SA (needed when --service-account= is used)
+$already = gcloud iam service-accounts get-iam-policy $APP_SERVICE_ACCOUNT_EMAIL `
+    --filter="bindings.role:roles/iam.serviceAccountUser AND bindings.members:serviceAccount:$GCF_SA" `
+    --format="value(bindings.role)" 2>$null
+if (-not $already) {
+    gcloud iam service-accounts add-iam-policy-binding $APP_SERVICE_ACCOUNT_EMAIL `
+        --member="serviceAccount:$GCF_SA" `
+        --role="roles/iam.serviceAccountUser" --quiet
+    Write-Host "  + granted iam.serviceAccountUser on runtime SA to Cloud Functions SA" -ForegroundColor Yellow
+}
+
+# ------------------------------------------------------------------------------
+# 8. Compute Engine default service account permissions (used by Cloud Build workers)
+# ------------------------------------------------------------------------------
+$COMPUTE_SA = "$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+Write-Host "Granting Cloud Run admin to Compute Engine default SA ($COMPUTE_SA)..." -ForegroundColor Blue
+Bind-RoleIfMissing "serviceAccount:$COMPUTE_SA" "roles/run.admin"
 
 Write-Host "✅ Permissions fixed (idempotent)" -ForegroundColor Green

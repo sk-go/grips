@@ -3,5 +3,7 @@ google-cloud-storage==2.*
 google-cloud-firestore==2.*
 google-cloud-secret-manager==2.*
 google-cloud-pubsub==2.*
+google-auth==2.*
+google-auth-transport-requests==2.*
 requests==2.*
 openai==1.* 

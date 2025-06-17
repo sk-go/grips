@@ -3,9 +3,12 @@
 $config = Get-Content .env | ConvertFrom-StringData
 $BUCKET_NAME = $config.BUCKET_NAME
 
-# Upload test audio
 $testFile = "test-audio.wav"
-Write-Host "📤 Uploading test audio..." -ForegroundColor Yellow
-gsutil cp $testFile gs://$BUCKET_NAME/test/
+$client = "TESTCLIENT"
+$timestamp = Get-Date -Format "yyyyMMddHHmmss"
+$destPath = "clients/$client/audio/$timestamp.wav"
 
-Write-Host "✅ Check Firestore for results!" -ForegroundColor Green
+Write-Host "📤 Uploading test audio to $destPath ..." -ForegroundColor Yellow
+gsutil cp $testFile gs://$BUCKET_NAME/$destPath
+
+Write-Host "✅ Check Firestore for results!" -ForegroundColor Green 

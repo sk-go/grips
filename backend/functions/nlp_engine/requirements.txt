@@ -3,3 +3,4 @@ google-cloud-firestore==2.*
 google-cloud-secret-manager==2.*
 google-cloud-pubsub==2.*
 openai==1.*
+google-cloud-storage==2.*
