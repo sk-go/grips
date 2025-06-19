@@ -61,6 +61,13 @@ def process_audio(cloud_event):
         # Find the corresponding upload document
         uploads = db.collection('uploads').where(filter=FieldFilter('storage_path', '==', name)).limit(1).get()
         upload_doc = uploads[0] if uploads else None
+
+        user_id = data.get("metadata", {}).get("userId")
+        if user_id:
+            upload_doc['user_id'] = user_id
+        else:
+            upload_doc['user_id'] = 'unknown'
+            logging.info("No user_id found in metadata")
         
         if upload_doc:
             logging.info("Found existing upload document %s", upload_doc.id)
